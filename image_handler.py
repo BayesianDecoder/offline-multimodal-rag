@@ -333,17 +333,26 @@ class CLIPEmbedder:
     def __init__(self, model_path: str, config: ImageProcessingConfig):
         self.config = config
         
-        if model_path and os.path.exists(model_path):
-            print(f"✅ Loading CLIP from {model_path}")
-            self.model = CLIPModel.from_pretrained(model_path, local_files_only=True)
-            self.processor = CLIPProcessor.from_pretrained(model_path, local_files_only=True)
-            self.available = True
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            self.model = self.model.to(self.device)
-            self.model.eval()
-            print(f"   Device: {self.device}")
+        if model_path:
+            try:
+                # local_files_only when it's a local directory; otherwise let
+                # transformers download from the HuggingFace hub.
+                local_only = os.path.isdir(model_path)
+                print(f"{'✅ Loading' if local_only else '⬇️  Downloading'} CLIP from {model_path}...")
+                self.model = CLIPModel.from_pretrained(model_path, local_files_only=local_only)
+                self.processor = CLIPProcessor.from_pretrained(model_path, local_files_only=local_only)
+                self.available = True
+                self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                self.model = self.model.to(self.device)
+                self.model.eval()
+                print(f"   Device: {self.device}")
+            except Exception as e:
+                print(f"⚠️  CLIP load failed ({e}); images will use OCR text only")
+                self.model = None
+                self.processor = None
+                self.available = False
         else:
-            print("⚠️  CLIP not available")
+            print("⚠️  No CLIP model path provided; images will use OCR text only")
             self.model = None
             self.processor = None
             self.available = False

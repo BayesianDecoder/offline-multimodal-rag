@@ -14,8 +14,16 @@ from rank_bm25 import BM25Okapi
 import re
 
 # --- Configuration ---
-EMBEDDING_MODEL = 'SIH/clip-model'
-RERANKER_MODEL = 'SIH/cross-encoder_ms-marco-MiniLM-L-6-v2'
+# 'SIH/clip-model' and 'SIH/cross-encoder_ms-marco-MiniLM-L-6-v2' are not
+# real local paths or HuggingFace repos, so loading them either fails
+# outright or hangs retrying network calls. Point at the real models —
+# the reranker follows Upgrade 3's hardware-aware selection when available.
+EMBEDDING_MODEL = 'sentence-transformers/clip-ViT-B-32'
+try:
+    from src.optimization.model_loader import CONFIG as _OPTIMIZATION_CONFIG
+    RERANKER_MODEL = _OPTIMIZATION_CONFIG['reranker']
+except Exception:
+    RERANKER_MODEL = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
 
 class UnifiedEmbeddingGenerator:
     """Generates embeddings for all content types using a single CLIP model."""
@@ -152,24 +160,34 @@ class BM25HybridSearchEngine:
         return results
     
     def semantic_search(self, query: str, k: int = 50) -> List[Tuple[int, float]]:
+        """Perform semantic search using FAISS with adaptive speed monitoring.
+
+        If search takes >200ms on a FlatIP index (corpus is getting large),
+        logs a one-time suggestion to re-index with HNSW/IVF for faster search.
         """
-        Perform semantic search using FAISS.
-        
-        Args:
-            query: Search query
-            k: Number of results to return
-            
-        Returns:
-            List of (document_index, similarity_score) tuples
-        """
+        import time
         query_embedding = self.generator.embed(query)
         if query_embedding.ndim == 1:
             query_embedding = np.array([query_embedding])
         if query_embedding.dtype != np.float32:
             query_embedding = query_embedding.astype(np.float32)
-        
+
+        t0 = time.perf_counter()
         similarities, indices = self.index.search(query_embedding, k)
-        
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+
+        # Warn once if FlatIP search is getting slow — it means the corpus
+        # has grown large enough that re-indexing with HNSW would help.
+        index_type = type(self.index).__name__
+        if elapsed_ms > 200 and "Flat" in index_type and not getattr(self, "_speed_warned", False):
+            n = self.index.ntotal
+            print(
+                f"[adaptive_index] WARNING: {index_type} search took {elapsed_ms:.0f}ms "
+                f"on {n} vectors. Re-index with HNSW for sub-ms search: "
+                f"call build_adaptive_faiss_index() (auto-selects HNSW at n≥5000)."
+            )
+            self._speed_warned = True
+
         results = []
         for i in range(len(indices[0])):
             idx = indices[0][i]
@@ -328,16 +346,63 @@ class BM25HybridSearchEngine:
         return final_results
 
 
-def create_and_save_faiss_index(embeddings: np.ndarray, metadata: list, 
+def build_adaptive_faiss_index(embeddings: np.ndarray) -> tuple:
+    """Pick and build the best FAISS index for the corpus size.
+
+    Thresholds (tuned for legal-doc corpora where recall matters more than
+    raw throughput):
+
+      < 5 000 vectors  →  IndexFlatIP   — exact brute-force, 100% recall,
+                                          fast enough at this scale
+      5 000–100 000    →  IndexHNSWFlat — ~99% recall, no training needed,
+                                          sub-millisecond search, the sweet
+                                          spot used by Pinecone/Weaviate
+                                          internally
+      > 100 000        →  IndexIVFFlat  — scalable ANN with inverted file,
+                                          needs cluster training, nprobe
+                                          controls recall/speed tradeoff
+
+    Returns (index, index_type_str).
+    """
+    n, d = embeddings.shape
+
+    if n < 5_000:
+        index = faiss.IndexFlatIP(d)
+        index_type = f"IndexFlatIP (exact, {n} vectors)"
+
+    elif n < 100_000:
+        # HNSW: M neighbours per node (32 is standard), efConstruction
+        # controls graph quality at build time, efSearch at query time.
+        M = 32
+        index = faiss.IndexHNSWFlat(d, M, faiss.METRIC_INNER_PRODUCT)
+        index.hnsw.efConstruction = 200
+        index.hnsw.efSearch = 64
+        index_type = f"IndexHNSWFlat (ANN M={M}, {n} vectors)"
+
+    else:
+        # IVFFlat: nlist ≈ 4√n is a standard starting point;
+        # nprobe = nlist/8 balances recall vs speed.
+        nlist = max(256, int(4 * np.sqrt(n)))
+        quantizer = faiss.IndexFlatIP(d)
+        index = faiss.IndexIVFFlat(quantizer, d, nlist, faiss.METRIC_INNER_PRODUCT)
+        print(f"Training IVFFlat index (nlist={nlist})…")
+        index.train(embeddings)
+        index.nprobe = max(16, nlist // 8)
+        index_type = f"IndexIVFFlat (ANN nlist={nlist} nprobe={index.nprobe}, {n} vectors)"
+
+    print(f"[adaptive_index] Selected {index_type}")
+    return index, index_type
+
+
+def create_and_save_faiss_index(embeddings: np.ndarray, metadata: list,
                                 output_path: str = "faiss_index.bin"):
-    """Creates and saves a FAISS index optimized for cosine similarity."""
+    """Creates and saves an adaptive FAISS index optimized for cosine similarity."""
     if embeddings.dtype != np.float32:
         embeddings = embeddings.astype(np.float32)
 
-    d = embeddings.shape[1]
-    index = faiss.IndexFlatIP(d)
-    
-    print(f"Adding {embeddings.shape[0]} vectors to the FAISS index...")
+    index, index_type = build_adaptive_faiss_index(embeddings)
+
+    print(f"Adding {embeddings.shape[0]} vectors to the FAISS index ({index_type})...")
     index.add(embeddings)
 
     faiss.write_index(index, output_path)

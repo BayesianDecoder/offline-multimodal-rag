@@ -1,0 +1,25 @@
+{
+  "name": "legal-rag-server",
+  "version": "1.0.0",
+  "description": "Node.js/Express API layer for the Legal Multimodal RAG Chatbot — proxies queries to the Flask RAG service and persists conversation/analytics data in MongoDB.",
+  "main": "src/app.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "form-data": "^4.0.1",
+    "joi": "^17.13.3",
+    "mongoose": "^8.9.5",
+    "multer": "^2.0.0",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.0.5",
+    "winston": "^3.17.0"
+  }
+}

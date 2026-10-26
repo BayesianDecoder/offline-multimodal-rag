@@ -1,0 +1,51 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Node
+node_modules/
+
+# Generated / runtime
+processed_output/
+processed_chunks.json
+processed_chunks.pkl
+uploads/
+*.pkl
+*.bin
+
+# Comparison outputs (large HTML/JSON artifacts)
+comparison_results.json
+comparison_report.html
+comparison_7b_results.json
+comparison_7b_report.html
+
+# Dataset (large files — add your own)
+dataset/legal_rag_dataset.zip
+dataset/*.DS_Store
+
+# OS
+.DS_Store
+.AppleDouble
+Thumbs.db
+
+# Secrets / env
+.env
+.env.*
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+nohup.out

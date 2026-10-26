@@ -1,0 +1,54 @@
+services:
+
+  flask:
+    build: .
+    ports: ["5001:5001"]
+    volumes:
+      - ./dataset:/app/dataset
+      - ./uploads:/app/uploads
+      - ./processed_output:/app/processed_output
+    environment:
+      # NOTE: the `ollama` Python client reads OLLAMA_HOST, not OLLAMA_URL.
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - REDIS_HOST=redis
+      - PORT=5001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
+
+  node:
+    build: ./server
+    ports: ["5000:5000"]
+    environment:
+      - PORT=5000
+      - MONGO_URI=mongodb://mongo:27017/legal_rag
+      - FLASK_URL=http://flask:5001
+      - REDIS_URL=redis://redis:6379
+      - CLIENT_ORIGIN=http://localhost:3000
+    depends_on:
+      - mongo
+      - redis
+      - flask
+
+  client:
+    build:
+      context: ./client
+      args:
+        VITE_API_URL: http://localhost:5000
+    ports: ["3000:3000"]
+    depends_on:
+      - node
+
+  mongo:
+    image: mongo:7
+    ports: ["27017:27017"]
+    volumes: ["mongo_data:/data/db"]
+
+  redis:
+    image: redis:alpine
+    ports: ["6379:6379"]
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+volumes:
+  mongo_data:

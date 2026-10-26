@@ -1,213 +1,249 @@
-# 🤖 Multimodal RAG System - Offline Intelligence Platform
+# Offline Multimodal Legal RAG Chatbot
 
-## A production-ready multimodal RAG system that ingests, indexes, and queries diverse data formats (PDF, DOCX, Images, Audio) using advanced AI techniques - completely OFFLINE.
+A fully offline, privacy-first RAG (Retrieval-Augmented Generation) chatbot built for Indian legal documents. It understands PDFs, Word documents, images, and audio — all running on your own machine with no data leaving your device.
 
-### 🎯 Overview
-This project solves a critical challenge: cross-format semantic search across documents, images, screenshots, and audio recordings. Traditional search tools isolate different data types, but our Retrieval-Augmented Generation (RAG) system creates a unified semantic space where all modalities can be searched, compared, and understood together.
+Built for Smart India Hackathon 2024.
 
-### Problem Statement
-Organizations routinely handle diverse data types (PDF, DOCX, Images, Screenshots, Recorded Calls, Notes). Traditional search tools struggle with:
+---
 
-- Cross-format understanding
-- Semantic relationships between different modalities
-- Contextual retrieval across text, images, and audio
-- Grounded, citation-backed answers
+## What it does
 
+You upload Indian legal documents — court judgments, FIRs, bail applications, statutes, diagrams, audio recordings — and then ask questions in plain English. The system finds the relevant parts of those documents and uses a local language model to generate an answer grounded in what it actually found, not in what the model memorized during training.
 
-### Our Solution
-A 100% offline multimodal RAG system that:
+It works across four document types at once. Ask about a FIR and it pulls text from the DOCX. Ask about a court hierarchy diagram and it reads the image. Ask about NCRB crime statistics and it cross-references the PDF and the chart image together. The answer always cites which file it came from.
 
-- ✅ Ingests multimodal inputs (DOCX/PDF/Images/Audio)
-- ✅ Indexes all modalities in a shared vector space
-- ✅ Supports natural language queries across all formats
-- ✅ Generates grounded summaries with citations
-- ✅ Establishes cross-format links (audio ↔ text ↔ images)
+---
 
-### 🎬 Demo
-Web Interface
+## Key features
 
-![DEMO](sample.jpg)
+**Multimodal ingestion**
+Processes PDF (via pdfplumber + unstructured), DOCX (python-docx), images (CLIP + Tesseract OCR), and audio (faster-whisper) in parallel. Everything gets embedded into a unified FAISS vector index.
 
-### Terminal Interface
+**Hybrid retrieval**
+Combines two search strategies — CLIP semantic embeddings and BM25 keyword search — then fuses their ranked results using Reciprocal Rank Fusion. A cross-encoder (ms-marco-MiniLM) reranks the top 50 candidates to get the final 15. This beats either approach alone, especially on legal text where exact terminology matters.
 
+**Adaptive FAISS index**
+Automatically picks the right index type based on corpus size:
+- Under 5,000 chunks → `IndexFlatIP` (exact search, maximum accuracy)
+- 5,000–100,000 chunks → `IndexHNSWFlat` (approximate, ~99% recall, much faster)
+- Over 100,000 chunks → `IndexIVFFlat` (scalable ANN for very large corpora)
 
-```
-$ python ragchatbot.py
+**Confidence gate**
+Before calling the LLM, the system scores every retrieved chunk against the query using the cross-encoder. If nothing scores above the confidence threshold, it declines to answer rather than hallucinate. This is what lets it correctly refuse questions that aren't in the indexed documents.
 
-🤖 CROSS-MODAL MULTIMODAL RAG CHATBOT
-======================================================================
-Model: llava:7b
-Index: processed_output/multimodal_index.bin
+**Hallucination evaluation**
+Every answer gets scored on three metrics automatically:
+- *Faithfulness* — are the answer's sentences grounded in the retrieved chunks?
+- *Answer relevance* — does the answer actually address the question?
+- *Context recall* — did the answer use the retrieved context?
 
-🎯 Supported Query Modes:
-   ✅ Text → Text, Images, Audio, Tables
-   ✅ Image → Similar Images + Related Content
-   ✅ Audio → Related Transcripts + Content
-   ✅ Multi-modal → Fused Results
+**Hardware-aware model selection**
+Detects your hardware at startup and picks the best model that fits in memory. On Apple M3 8GB it defaults to `qwen2.5vl:3b` (3.2GB), which ran at **0.912 average reliability score** across 10 legal queries. Full configuration table below.
 
-🔍 Your query: What are the Q4 revenue numbers?
+**3-layer stack**
+Flask (RAG backend) → Node.js (API gateway + auth) → React (chat UI). Can also be run standalone via the Flask API or command line.
 
-🔍 Searching (Hybrid: Semantic + BM25 + Reranking)...
-   ✓ Retrieved 10 results
+**Redis caching**
+Three-layer cache: embedding cache (1h TTL), retrieval cache (30min TTL), and per-session conversation memory (1h TTL). Cuts latency significantly on repeated or similar queries.
 
-📊 Retrieved:
-   Text chunks: 3
-   Tables: 2
-   Images: 1 (1 with files)
-   Audio: 0
+---
 
-🤖 ANSWER:
-Based on the Q4 financial table (Table 2.1), the revenue numbers are:
-- **Total Revenue**: $45.3M (up 23% YoY)
-- **Product Sales**: $32.1M  
-- **Services**: $13.2M
+## Model comparison results
 
-The growth was driven primarily by enterprise segment expansion...
-[Source: quarterly_report_2024.pdf, Table 2.1]
+Tested on 10 Indian legal queries across PDF, DOCX, image, and audio sources. All models ran locally via Ollama on Apple M3 8GB with `OLLAMA_FLASH_ATTENTION=1`.
 
-```
+| Model | Avg score | Avg latency | Queries declined | Size |
+|---|---|---|---|---|
+| **qwen2.5vl:3b** | **0.912** | **24.7s** | 0 / 10 | 3.2 GB |
+| llava:7b (Q4_0, ctx=1024) | 0.900 | 35.7s | 0 / 10 | 4.7 GB |
+| llava-phi3 | 0.772 | 37.7s | 3 / 10 | 2.9 GB |
 
-### 🚀 Installation
-Prerequisites
+**qwen2.5vl:3b** is the default for machines with 8GB or less. It's faster, more accurate, and answers every in-corpus query. **llava:7b** runs fine on 8GB with flash attention and ctx=1024 — it scored within 1.2% of qwen and occasionally outperformed it on statute text, but needs more memory and is 1.4× slower. **llava-phi3** underperformed both and incorrectly declined 3 queries that are clearly in the corpus.
 
-- Python: 3.8 or higher
-- Ollama: For LLM inference (Install Ollama)
-- Tesseract OCR: For image text extraction
+Score is a composite of faithfulness, answer relevance, and context recall. Threshold for "Reliable" is 0.6.
 
-#### Step 1: Clone Repository
+---
 
-```
-git clone https://github.com/BayesianDecoder/SIH-HACKATHON---SIH25231
+## Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+- [Ollama](https://ollama.com) — for running the LLM locally
+- Tesseract OCR — `brew install tesseract` on Mac, `apt install tesseract-ocr` on Linux
+- Redis (optional, for caching) — `brew install redis`
+
+For Apple Silicon Macs, start Ollama with flash attention to reduce memory usage:
+```bash
+OLLAMA_FLASH_ATTENTION=1 ollama serve
 ```
 
-#### Step 2: Install Dependencies
+---
 
-```
+## Installation
+
+```bash
+git clone https://github.com/BayesianDecoder/offline-multimodal-rag
+cd offline-multimodal-rag
+
+# Python backend
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-```
-#### Step 3: Download Models
-```
-## Download CLIP model (for embeddings)
 
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('clip-ViT-B-32')"
-```
+# Pull the LLM (auto-selected based on your hardware)
+ollama pull qwen2.5vl:3b     # Apple Silicon / 8GB
+ollama pull llava:7b          # 12GB+ or with flash attention
 
-#### Download LLaVA model (for generation)
-```
-ollama serve
-
-# In new terminal
-ollama pull llava:7b
-```
-#### Download Cross-Encoder (for reranking)
-```
-python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
-```
-#### Step 4: Verify Installation
-```
-python -c "import torch; import faiss; import ollama; print('✅ All dependencies installed!')"
+# Node gateway + React frontend
+cd server && npm install && cd ..
+cd client && npm install && cd ..
 ```
 
-### ⚡ Quick Start
+---
 
-#### 1. Process Your Documents
-```
-# Process a directory with mixed file types
-python multimodal_unified_parallel.py /path/to/your/documents \
-    --output-dir processed_output \
-    --workers 8
-```
+## Running
 
-### Expected output:
-
-```
-🚀 PARALLEL MULTIMODAL RAG PIPELINE
- ======================================================================
- Found: 15 files
-    PDFs: 5
-    DOCX: 3  
-    Images: 4
-    Audio: 3
-
- ⚡ PARALLEL PROCESSING ALL TYPES SIMULTANEOUSLY
- [████████████████████████████] 100%
-
- ✅ PARALLEL PIPELINE COMPLETE!
- Duration: 45.2s
- Total Chunks: 342
- Speed: 7.6 chunks/second
-
-```
-#### 2. Launch Web Interface
-```
-# Start Flask server
-python app1.py
-
-# Access at: http://localhost:5000
-
-```
-#### 3. Use Terminal Chatbot
-```
-# Interactive mode
-python ragchatbot.py
-
+**Quickstart — just the Flask backend:**
+```bash
+source venv/bin/activate
+python app.py
+# Open http://localhost:5000
 ```
 
-# Command-line mode
+**Full 3-layer stack:**
+```bash
+# Terminal 1 — Flask RAG backend
+python app.py
+
+# Terminal 2 — Node gateway
+cd server && npm start
+
+# Terminal 3 — React frontend
+cd client && npm start
+# Open http://localhost:3000
 ```
-python ragchatbot.py text "What is the main topic?"
-python ragchatbot.py image diagram.png "Explain this chart"
-python ragchatbot.py audio meeting.mp3 "Summarize the discussion"
+
+**Docker (if you prefer):**
+```bash
+docker-compose up --build
 ```
 
-### 📖 Usage
-Web Interface
+**Command line:**
+```bash
+python ragchatbot.py text "What are the grounds for bail in Indian law?"
+python ragchatbot.py image path/to/diagram.png "What does this show?"
+python ragchatbot.py audio path/to/recording.wav
+```
 
-- Upload Files: Drag-and-drop or click to select files
-- Process: Click "Process Files" (progress tracked in real-time)
-- Query: Type natural language questions
-- Results: Get answers with citations and source links
+---
 
+## Indexing your documents
 
-## ✨ Key Features
+Put your files in the `dataset/` folder, then run the ingestion pipeline:
 
-### 🔍 Advanced Search Capabilities
+```bash
+python multimodal_unified_parallel.py
+```
 
-- Hybrid Search: Combines semantic (CLIP) + keyword (BM25) + cross-encoder reranking
-- Cross-Modal Retrieval: Text query → finds relevant images, tables, audio transcripts
-- Multi-Query Support: Text, Image, Audio, and Multi-modal queries
-- 5-10x Faster: Parallel processing for all file types
+Supported formats: `.pdf`, `.docx`, `.doc`, `.png`, `.jpg`, `.jpeg`, `.mp3`, `.wav`, `.m4a`
 
-### 📄 Document Processing
+The pipeline processes files in parallel (configurable via `--workers`), builds the FAISS index, and saves everything to `processed_output/`. This only needs to run once unless you add new documents.
 
-- PDF: Extracts text, tables, images with 5-sentence context windows
-- DOCX: LLM-friendly table formatting + OCR for embedded images
-- Images: Advanced OCR, screenshot detection, CLIP embeddings
-- Audio: Automatic speaker diarization (librosa MFCC + KMeans), Whisper transcription
+---
 
-### 🧠 AI-Powered Intelligence
+## Model comparison
 
-- LLaVA Vision Model: Analyzes images directly (not just OCR)
-- CLIP Embeddings: Unified semantic space for all modalities
-- Cross-Encoder Reranking: Superior result quality
-- Citation Transparency: Every answer cites exact sources
+To benchmark two models head-to-head on your own corpus:
 
-### 🌐 User Experience
+```bash
+# Default: qwen2.5vl:3b vs llava:7b
+python compare_models.py
 
-- Web Interface: Clean, intuitive Flask-based UI
-- Interactive CLI: Terminal-based chatbot mode
-- Real-time Processing: Live progress tracking
-- Multi-file Support: Batch upload and processing
+# Custom models
+python compare_models.py --model-a qwen2.5vl:3b --model-b llava-phi3 --ctx-a 2048 --ctx-b 2048
 
-## Architecture
-![DEMO](architecture.png)
+# For llava:7b on 8GB — start Ollama with flash attention first
+OLLAMA_FLASH_ATTENTION=1 ollama serve
+python compare_models.py --model-b llava:7b --ctx-b 1024
+```
 
+Outputs `comparison_results.json` and `comparison_report.html` with per-query scores, latencies, answer previews, and hallucination analysis.
 
-### Future Enhancements (Planned)
+---
 
-Planned features include:
+## Hardware configuration
 
-- Enhanced Entity Extraction: NEO4j graph database for relationships
-- Redis Caching: Hot vector storage for frequently accessed content
-- Smart Context Preservation: Advanced conversation memory
-- Phi-3 Integration: Improved answer quality with local small models
+The system auto-detects your hardware and picks the right tier. You can override with environment variables:
+
+```bash
+RAG_MODEL=llava:7b RAG_NUM_CTX=1024 python app.py
+```
+
+| Hardware | Default model | Reranker | Whisper |
+|---|---|---|---|
+| Apple Silicon ≤ 10 GB | qwen2.5vl:3b | MiniLM-L2 | tiny |
+| x86, 6–12 GB RAM | llava-phi3 | MiniLM-L2 | base |
+| x86, ≥ 12 GB RAM | llava:7b | MiniLM-L6 | base |
+
+---
+
+## Project structure
+
+```
+├── app.py                          # Flask API — upload, index, query endpoints
+├── ragchatbot.py                   # Core RAG chatbot class
+├── vectorstore.py                  # FAISS + BM25 hybrid search, adaptive index
+├── multimodal_unified_parallel.py  # Document ingestion pipeline (parallel)
+├── image_handler.py                # CLIP image embedder + OCR
+├── audio_handler.py                # faster-whisper transcription
+├── compare_models.py               # Head-to-head model benchmarking
+├── requirements.txt
+├── Dockerfile
+├── docker-compose.yml
+│
+├── src/
+│   ├── optimization/
+│   │   └── model_loader.py         # Hardware detection, model config
+│   ├── cache/
+│   │   └── redis_cache.py          # 3-layer Redis cache
+│   └── evaluation/
+│       └── hallucination_eval.py   # Faithfulness / relevance / recall scoring
+│
+├── server/                         # Node.js API gateway
+│   └── src/routes/query.js
+│
+└── client/                         # React chat frontend
+    └── src/
+        ├── components/
+        │   └── MessageBubble.jsx   # Chat UI with loading hints + eval scores
+        └── lib/api.js
+```
+
+---
+
+## How the retrieval works
+
+1. Your query is embedded into a 512-dim CLIP vector
+2. FAISS finds the top 50 semantically similar chunks (or uses HNSW/IVF for large corpora)
+3. BM25 independently finds the top 50 keyword-matching chunks
+4. Reciprocal Rank Fusion merges both lists, rewarding chunks that rank well in both
+5. The cross-encoder reranks the top 50 fused results — it scores each (query, chunk) pair directly rather than comparing embeddings, giving much better precision
+6. The confidence gate checks if the best-scoring chunk clears the minimum threshold. If not, the system declines rather than guess.
+7. The top 15 chunks are formatted into a prompt and sent to the local LLM via Ollama
+8. The answer and its evaluation scores come back to the UI
+
+---
+
+## Limitations
+
+- **Context window**: At `ctx=2048` (default), very long legal documents get truncated in the prompt. The top 15 chunks each capped at 500 characters is ~7,500 characters of context.
+- **Audio**: Only one audio chunk is indexed per file (full transcript as one document). Long recordings may lose detail.
+- **OCR quality**: Image-heavy documents depend on Tesseract OCR quality. Handwritten text is not supported.
+- **OOD detection**: The confidence gate can miss truly out-of-domain queries when the LLM's Metal GPU and the cross-encoder compete for memory on Apple Silicon. Setting a slightly higher threshold (`--confidence 0.08`) improves this.
+- **No graph retrieval**: A Neo4J knowledge graph layer was part of the original design but not yet implemented.
+
+---
+
+## License
+
+MIT

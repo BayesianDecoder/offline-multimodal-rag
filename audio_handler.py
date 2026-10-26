@@ -3,6 +3,7 @@
 # audio_handler.py - Enhanced Audio Processing with librosa Speaker Diarization
 
 import os
+import tempfile
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
@@ -375,10 +376,14 @@ class EnhancedAudioHandler:
         
         for i, ((chunk, start_time, end_time), speaker_label) in enumerate(zip(chunks, speaker_labels)):
             try:
-                # Export chunk
-                temp_file = f"temp_transcribe_{i}.wav"
+                # Export chunk to a unique temp file — a fixed name like
+                # f"temp_transcribe_{i}.wav" collides across the parallel
+                # worker processes that each start at chunk index 0,
+                # causing "No such file or directory" races.
+                fd, temp_file = tempfile.mkstemp(suffix=".wav", prefix="transcribe_")
+                os.close(fd)
                 chunk.export(temp_file, format="wav")
-                
+
                 # Transcribe
                 if self.use_faster:
                     segments_iter, info = self.model.transcribe(temp_file, beam_size=5)
@@ -389,7 +394,7 @@ class EnhancedAudioHandler:
                     result = self.model.transcribe(temp_file, verbose=False)
                     text = result['text'].strip()
                     language = result['language']
-                
+
                 # Cleanup
                 os.remove(temp_file)
                 

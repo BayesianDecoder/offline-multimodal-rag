@@ -23,7 +23,19 @@ from vectorstore import (
 # ============================================================================
 
 FAISS_INDEX_PATH = "processed_output/multimodal_index.bin"
-OLLAMA_MODEL = "llava:7b"
+
+try:
+    # Hardware-aware model selection (Upgrade 3). Falls back to the
+    # original hardcoded default if the optimization module isn't
+    # importable (e.g. ragchatbot.py run standalone outside the project).
+    from src.optimization.model_loader import CONFIG
+    OLLAMA_MODEL = CONFIG['llm']
+    OLLAMA_NUM_CTX = CONFIG.get('num_ctx', 2048)
+except Exception:
+    # qwen2.5vl:3b is the best accuracy/memory tradeoff for Apple Silicon /
+    # low-RAM machines (2.3GB vs llava-phi3's 2.9GB, better document QA quality).
+    OLLAMA_MODEL = "qwen2.5vl:3b"
+    OLLAMA_NUM_CTX = 2048
 
 
 # ============================================================================
@@ -496,39 +508,49 @@ class CrossModalRAGChatbot:
     # ========================================================================
     
     def generate_answer(
-        self, 
-        query: str, 
-        search_results: List[Dict], 
-        query_type: str = "text"
+        self,
+        query: str,
+        search_results: List[Dict],
+        query_type: str = "text",
+        custom_prompt: Optional[str] = None
     ) -> str:
         """
         Generate answer using multimodal context with LLaVA.
-        
+
         Args:
             query: User query
             search_results: List of search results
             query_type: Type of query
-            
+            custom_prompt: If provided, used verbatim instead of the
+                comprehensive prompt (e.g. a history-aware prompt built by
+                RAGCache.build_prompt_with_history). Image handling is
+                unaffected either way.
+
         Returns:
             Generated answer string
         """
         # Format context
         context = self.format_context_by_modality(search_results)
-        
+
         # Build prompt
-        prompt = self.build_comprehensive_prompt(query, context, query_type)
+        prompt = custom_prompt if custom_prompt is not None else self.build_comprehensive_prompt(query, context, query_type)
         
         try:
-            # Use LLaVA if images present
+            # Use vision model if images present
             if context['image_paths']:
-                print(f"   🖼️  Analyzing {len(context['image_paths'])} images with LLaVA...")
+                print(f"   🖼️  Analyzing {len(context['image_paths'])} images with {OLLAMA_MODEL}...")
                 response = ollama.chat(
                     model=OLLAMA_MODEL,
                     messages=[{
                         'role': 'user',
                         'content': prompt,
                         'images': context['image_paths'][:5]  # Limit to 5 images
-                    }]
+                    }],
+                    options={
+                        'temperature': 0.1,
+                        'num_predict': 1000,
+                        'num_ctx': OLLAMA_NUM_CTX,
+                    }
                 )
                 return response['message']['content'].strip()
             else:
@@ -539,7 +561,8 @@ class CrossModalRAGChatbot:
                     prompt=prompt,
                     options={
                         'temperature': 0.1,
-                        'num_predict': 1000
+                        'num_predict': 1000,
+                        'num_ctx': OLLAMA_NUM_CTX,
                     }
                 )
                 return response.get('response', 'No response generated.').strip()
@@ -551,14 +574,16 @@ class CrossModalRAGChatbot:
     # CHAT METHODS
     # ========================================================================
     
-    def chat_text(self, query: str, k: int = 10) -> str:
+    def chat_text(self, query: str, k: int = 10, custom_prompt: Optional[str] = None) -> str:
         """
         Text query mode.
-        
+
         Args:
             query: Text query
             k: Number of results
-            
+            custom_prompt: Optional pre-built prompt (see generate_answer)
+                to use instead of the default comprehensive prompt.
+
         Returns:
             Generated answer
         """
@@ -582,10 +607,10 @@ class CrossModalRAGChatbot:
         print(f"   Audio: {len(context['audio'])}")
         
         # Generate answer
-        answer = self.generate_answer(query, results, query_type="text")
-        
+        answer = self.generate_answer(query, results, query_type="text", custom_prompt=custom_prompt)
+
         return answer
-    
+
     def chat_image(
         self, 
         image_path: str, 
@@ -1055,12 +1080,14 @@ System Commands:
 Index Path: Set FAISS_INDEX_PATH in script
    Default: processed_output/multimodal_index.bin
 
-LLM Model: Set OLLAMA_MODEL in script
-   Default: llava:7b
+LLM Model: auto-selected by src/optimization/model_loader.py based on RAM
+   Apple Silicon ≤10GB: qwen2.5vl:3b (2.3GB, best accuracy/memory tradeoff)
+   6-12GB x86:         llava-phi3 (2.9GB, vision-capable)
+   ≥12GB x86:          llava:7b
 
 Before running:
    1. Ensure Ollama is running: ollama serve
-   2. Ensure LLaVA is available: ollama pull llava:7b
+   2. Pull the right model: ollama pull qwen2.5vl:3b   (M3 Mac, 8GB)
    3. Process your data first with multimodal_unified_parallel.py
 
 ═══════════════════════════════════════════════════════════════════

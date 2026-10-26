@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+uploads/
+processed_output/
+dataset/legal_rag_dataset.zip
+node_modules/
+client/
+server/
+.git/
+.DS_Store
+*.log

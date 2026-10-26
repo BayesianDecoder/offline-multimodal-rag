@@ -56,6 +56,6 @@ urllib3
 # Progress Bars
 tqdm
 
-# Serialization
-pickle5
+# System / hardware-aware config
+psutil
 

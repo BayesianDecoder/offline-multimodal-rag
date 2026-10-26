@@ -17,6 +17,15 @@ from image_handler import ImageProcessor, ImageProcessingConfig
 from audio_handler import EnhancedAudioHandler, AudioConfig
 from vectorstore import UnifiedEmbeddingGenerator, create_and_save_faiss_index
 
+try:
+    # Hardware-aware whisper model size (Upgrade 3), e.g. "tiny" on 4GB
+    # boxes vs "base" on 6GB+. Falls back to AudioConfig's own default
+    # if the optimization module isn't importable.
+    from src.optimization.model_loader import CONFIG as _OPTIMIZATION_CONFIG
+    WHISPER_MODEL = _OPTIMIZATION_CONFIG['whisper']
+except Exception:
+    WHISPER_MODEL = AudioConfig().whisper_model
+
 
 # ============================================================================
 # PARALLEL PROCESSING WORKER FUNCTIONS
@@ -94,7 +103,7 @@ def process_single_audio(args):
     """Worker function for processing single audio."""
     audio_path, session_id = args
     try:
-        config = AudioConfig(num_speakers=None)
+        config = AudioConfig(num_speakers=None, whisper_model=WHISPER_MODEL)
         handler = EnhancedAudioHandler(config)
         chunks = handler.process_audio(audio_path, session_id=session_id)
         return {
@@ -130,7 +139,7 @@ class ParallelMasterPipeline:
     
     def __init__(
         self,
-        clip_model_path: str = "SIH/clip-model",
+        clip_model_path: str = "openai/clip-vit-base-patch32",
         output_dir: str = "processed_output",
         max_workers: int = None
     ):
@@ -567,7 +576,7 @@ def main():
     parser.add_argument('--output-dir', default='processed_output',
                        help='Output directory')
     parser.add_argument('--clip-model', 
-                       default='SIH/clip-model',
+                       default='openai/clip-vit-base-patch32',
                        help='Path to CLIP model')
     parser.add_argument('--workers', type=int, default=None,
                        help='Number of parallel workers (default: 75%% of CPU cores)')
