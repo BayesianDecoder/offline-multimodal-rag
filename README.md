@@ -64,10 +64,28 @@ Score is a composite of faithfulness, answer relevance, and context recall. Thre
 
 ---
 
+## Stack
+
+This is a MERN stack project with an additional Python/Flask service for AI:
+
+```
+React + Vite  (port 3000)   — chat UI, file upload, analytics dashboard
+      ↓
+Node / Express  (port 5000) — API gateway, MongoDB persistence, Socket.io
+      ↓
+Flask  (port 5001)          — RAG engine (FAISS, reranking, Ollama LLM)
+      ↓
+MongoDB                     — conversation history, analytics
+Ollama                      — local LLM inference (qwen2.5vl:3b by default)
+```
+
+---
+
 ## Prerequisites
 
 - Python 3.10+
 - Node.js 18+
+- MongoDB — `brew install mongodb-community` on Mac, or run via Docker
 - [Ollama](https://ollama.com) — for running the LLM locally
 - Tesseract OCR — `brew install tesseract` on Mac, `apt install tesseract-ocr` on Linux
 - Redis (optional, for caching) — `brew install redis`
@@ -85,17 +103,22 @@ OLLAMA_FLASH_ATTENTION=1 ollama serve
 git clone https://github.com/BayesianDecoder/offline-multimodal-rag
 cd offline-multimodal-rag
 
-# Python backend
+# Python RAG backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Pull the LLM (auto-selected based on your hardware)
-ollama pull qwen2.5vl:3b     # Apple Silicon / 8GB
+# Pull the LLM
+ollama pull qwen2.5vl:3b     # Apple Silicon / 8GB (recommended)
 ollama pull llava:7b          # 12GB+ or with flash attention
 
-# Node gateway + React frontend
-cd server && npm install && cd ..
+# Node API gateway
+cd server
+cp .env.example .env          # edit if your ports differ
+npm install
+cd ..
+
+# React frontend
 cd client && npm install && cd ..
 ```
 
@@ -103,29 +126,37 @@ cd client && npm install && cd ..
 
 ## Running
 
-**Quickstart — just the Flask backend:**
+**Full MERN stack (recommended):**
 ```bash
+# Terminal 1 — start MongoDB
+brew services start mongodb-community   # Mac
+# or: sudo systemctl start mongod       # Linux
+
+# Terminal 2 — start Ollama
+OLLAMA_FLASH_ATTENTION=1 ollama serve
+
+# Terminal 3 — Flask RAG backend (port 5001)
 source venv/bin/activate
 python app.py
-# Open http://localhost:5000
-```
 
-**Full 3-layer stack:**
-```bash
-# Terminal 1 — Flask RAG backend
-python app.py
-
-# Terminal 2 — Node gateway
+# Terminal 4 — Node gateway (port 5000)
 cd server && npm start
 
-# Terminal 3 — React frontend
-cd client && npm start
+# Terminal 5 — React frontend (port 3000)
+cd client && npm run dev
 # Open http://localhost:3000
 ```
 
-**Docker (if you prefer):**
+**Docker (everything in one command):**
 ```bash
 docker-compose up --build
+```
+
+**Quickstart — Flask only (no Node/MongoDB):**
+```bash
+source venv/bin/activate
+python app.py
+# Open http://localhost:5001
 ```
 
 **Command line:**
